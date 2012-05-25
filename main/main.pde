@@ -40,6 +40,9 @@ static unsigned int end_reached = 0;
 static float temp_float1, sin_theta;
 static int wavelet_ind = 0;
 static int output = 0;
+int acc_offset = 0;
+int calibrate_samplenum;
+boolean calibrate_flag = 0;
 //--------------------------------------------------
  
  
@@ -119,12 +122,12 @@ void loop() {
       SerialUSB.print("]\n");*/
       
       // PHYSICS PLOT OUTPUT (rolling noise, speed, distance)
-      /*SerialUSB.print(output);
+      SerialUSB.print(output);
       SerialUSB.print(", ");
       SerialUSB.print(speed);   
       SerialUSB.print(", ");
       SerialUSB.print(distance);      
-      SerialUSB.print("\n");*/
+      SerialUSB.print("\n");
       
       // PHYSICS TEST OUTPUT
       /*SerialUSB.print(samplenum);
@@ -202,6 +205,9 @@ void update_terminal_input()
     new_rcvd_char = SerialUSB.read();
     
     switch (new_rcvd_char) {
+      case 'c':
+        calibrate();
+        break;
       /*
       case 'm':
         main_menu();
@@ -308,15 +314,28 @@ void update_terminal_input()
 // PHYSICS
 //--------------------------------------------------
 
+void calibrate()
+{
+   calibrate_flag = 1;
+   calibrate_samplenum = 0;
+}
+
 void update_physics()
 {
-  
   acc_old = acc;
   speed_old = speed;
 
   // update acceleration based on x axis acceleration
   sin_theta = (float)x_a/17000;
-  acc = sin_theta*7*MULT_FACTOR;
+  acc = sin_theta*7*MULT_FACTOR - acc_offset;
+  
+  if(calibrate_flag)
+  {
+    acc_offset = (int)((acc + calibrate_samplenum * acc_offset) / calibrate_samplenum);
+    calibrate_samplenum++;
+    if(calibrate_samplenum == UPDATE_RATE)
+      calibrate_flag = 0;
+  }
   
   // update speed. 1/UPDATE_RATE is time
   speed = speed + acc/UPDATE_RATE;
