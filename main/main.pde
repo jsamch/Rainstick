@@ -11,7 +11,7 @@
 //--------------------------------------------------
 // MAIN  
 //--------------------------------------------------
-static int length = 300*(MULT_FACTOR/1000); // default length 200 mm
+static int length = 300*(MULT_FACTOR/1000);
 static int friction = 0;
 static int bounce = 3;   // use 1/10 of this value
 static int mass = 16;
@@ -22,6 +22,16 @@ static int record = 0;
 uint32 start_time = 0, end_time, delay_micros;
 int time_error;
 int samplenum = 0;
+//--------------------------------------------------
+
+
+//--------------------------------------------------
+// I/O  
+//--------------------------------------------------
+int ledPin1 = 17;
+int ledPin2 = 18;
+int ledPin3 = 19;
+int ledPin4 = 20;
 //--------------------------------------------------
 
 
@@ -55,6 +65,17 @@ float xf_g, yf_g, zf_g;
 
 
 //--------------------------------------------------
+// SPI/DAC
+//--------------------------------------------------
+int ssPin = 10;
+int ldacPin = 12;
+uint16 spiData = 0x7FFF;
+// Use SPI port number 1
+HardwareSPI spi(1);
+//-------------------------------------------------- 
+
+
+//--------------------------------------------------
 // TIMER INTERRUPTS
 //--------------------------------------------------
 HardwareTimer timer(2);
@@ -67,18 +88,31 @@ HardwareTimer timer(2);
    
 void setup() { 
   
-  // Set up the built-in LED pin as an output:
+  // Set up LEDs and SPI pins as outputs
   pinMode(BOARD_LED_PIN, OUTPUT);
+  pinMode(ledPin1, OUTPUT);  
+  pinMode(ledPin2, OUTPUT);  
+  pinMode(ledPin3, OUTPUT);  
+  pinMode(ledPin4, OUTPUT);  
+  pinMode(ssPin, OUTPUT);  
+  pinMode(ldacPin, OUTPUT);  
      
+  // Set up serial port
   Serial1.begin(115200);
-    
-  SerialUSB.println("Hello"); 
-  i2c_master_enable(I2C1,I2C_BUS_RESET | I2C_FAST_MODE);
-         
+  
+  // Set up I2C
+  i2c_master_enable(I2C1,I2C_BUS_RESET | I2C_FAST_MODE);       
   ls331_init();
   
-  // Set up the LED to blink
-  pinMode(BOARD_LED_PIN, OUTPUT);
+  // Set up SPI
+  // NOTE: The Slave Select delay in spi_writeToDac is hard-coded based on the clock frequency.  Changing the clock frequency
+  // from 2.25MHz will require adjusting the delay as indicated in spi_writeToDac.
+  spi.begin(SPI_2_25MHZ, MSBFIRST, 2);
+  digitalWrite(ssPin, HIGH);  
+  digitalWrite(ldacPin, HIGH);  
+  spi_init();
+  
+  // Set up Timer Interrupts
   // Pause the timer while we're configuring it
   timer.pause();
   // Set up period
@@ -92,6 +126,10 @@ void setup() {
   // Start the timer counting
   timer.resume();
   
+  digitalWrite(ledPin1, HIGH);  
+  digitalWrite(ledPin2, LOW);  
+  digitalWrite(ledPin3, HIGH);  
+  digitalWrite(ledPin4, HIGH);  
 }
 
 void loop() {
@@ -102,13 +140,17 @@ void loop() {
     delayMicroseconds(1000000/UPDATE_RATE);
     toggleLED();
     
-    // UPDATE RATE CONTROL
-    //time_error = start_time - samplenum*4000;
-    //end_time = micros();
-    //delay_micros = end_time - start_time;
-    //delayMicroseconds(1000000/UPDATE_RATE/* - delay_micros - time_error*/);
-    //start_time = micros();
+    // UPDATE RATE CONTROL (replaced by timer interrupts)
+    /*time_error = start_time - samplenum*4000;
+    end_time = micros();
+    delay_micros = end_time - start_time;
+    delayMicroseconds(1000000/UPDATE_RATE - delay_micros - time_error);
+    start_time = micros();*/
     
+    // check the console for and inputted character
+    update_terminal_input();
+    
+    // terminal output
     if(samplenum % 1 == 0)
     {
       // SAMPLING/UPDATE RATE TEST OUTPUT
@@ -187,10 +229,13 @@ void handler(void) {
   yf_g = y_g*8.75/1000.0;
   zf_g = z_g*8.75/1000.0;
    
-  update_terminal_input();
   update_physics();
   
 }
+
+// (END INTERRUPT HANDLING)
+//--------------------------------------------------
+
 
 //--------------------------------------------------
 // MENUS
@@ -318,6 +363,7 @@ void calibrate()
 {
    calibrate_flag = 1;
    calibrate_samplenum = 0;
+   acc_offset = 0;
 }
 
 void update_physics()
@@ -329,6 +375,7 @@ void update_physics()
   sin_theta = (float)x_a/17000;
   acc = sin_theta*7*MULT_FACTOR - acc_offset;
   
+  // calibration
   if(calibrate_flag)
   {
     acc_offset = (int)((acc + calibrate_samplenum * acc_offset) / calibrate_samplenum);
@@ -464,6 +511,48 @@ uint16 ls331_read(uint8 reg, int16 addr)
 }
 
 // (END I2C)
+//--------------------------------------------------
+
+
+//--------------------------------------------------
+// SPI
+//--------------------------------------------------
+void spi_init()
+{
+  // Software reset
+  spi.write(0x28);  
+  spi.write(0x00);  
+  spi.write(0x01);
+  // Set LDAC to Asynchronous mode
+  spi.write(0x30);  
+  spi.write(0x00);  
+  spi.write(0x00);  
+  // Enable Internal Reference
+  /*spi.write(0x38);  
+  spi.write(0x00);  
+  spi.write(0x01);*/
+}
+
+// Ignores the 4 MSBs
+void spi_writeToDac(uint16 val)
+{
+  val = val << 4;
+  digitalWrite(ssPin, LOW);  
+  // 0x07 --> write to input registers of both DACs (A and B)
+  spi.write(0x07);
+  spi.write(val >> 8);
+  spi.write(val);
+  //uint8 response = spi.read();
+  // 6 microsecond delay to ensure that the Slave Select pin stays low until the 24th bit is transmitted
+  // (only works with 2.25MHz clock frequency)
+  delayMicroseconds(6);
+  digitalWrite(ssPin, HIGH);
+  digitalWrite(ldacPin, LOW);  
+  delayMicroseconds(1);
+  digitalWrite(ldacPin, HIGH);  
+}
+
+// (END SPI)
 //--------------------------------------------------
 
 
